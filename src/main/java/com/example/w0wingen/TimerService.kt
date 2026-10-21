@@ -195,6 +195,7 @@ class TimerService : AccessibilityService() {
     private var autoBtn: Button? = null
     private var listCol: LinearLayout? = null
     private var radiusView: TextView? = null
+    private var gapView: TextView? = null
     private var toolsBox: LinearLayout? = null
     private var panelLp: WindowManager.LayoutParams? = null
     private var handleLp: WindowManager.LayoutParams? = null
@@ -316,6 +317,9 @@ class TimerService : AccessibilityService() {
     private fun cfgI(key: String, def: Int): Int = cfgF(key, def.toFloat()).toInt()
 
     private fun cfgB(key: String, def: Boolean): Boolean = prefs().getBoolean("cfg_" + key, def)
+
+    /** Pot ve Recycle tıklamaları arasındaki bekleme (ms). Oyundaki panelden ayarlanır. */
+    private fun gap(): Int = (cfgF("clickGap", 1.0f) * 1000).toInt().coerceIn(200, 10000)
 
     private fun toggleDef(key: String): Boolean {
         for (t in TOGGLES) if (t.first == key) return t.third
@@ -1123,6 +1127,7 @@ class TimerService : AccessibilityService() {
                 tries++
                 say("Random " + tries + "/" + maxTry + " · " + title(e))
                 tapPoint("random")
+                gameAuto = false
                 pause((cfgF("randomWait", 2.5f) * 1000).toInt())
                 mb = ensureMap()
             }
@@ -1170,6 +1175,7 @@ class TimerService : AccessibilityService() {
             tapPoint("closeChat")
             pause(500)
         }
+        gameAuto = false
     }
 
     private fun teleport(map: String) {
@@ -1194,12 +1200,14 @@ class TimerService : AccessibilityService() {
             tapPoint("switchOk")
             pause(600)
         }
+        gameAuto = false
         pause(cfgI("switchWait", 6) * 1000)
     }
 
     /** Oyundaki oto atak düğmesini istenen duruma getirir (düğme aç/kapa olduğu için durumu takip eder). */
     private fun setAuto(want: Boolean) {
-        if (gameAuto == want) return
+        // Her ışınlanma/wire değişiminde oyun oto atağı kapatır; açmak istediğimizde düğme her zaman kapalıdır.
+        if (!want && !gameAuto) return
         tapPoint("autoAtk")
         gameAuto = want
         pause(700)
@@ -1284,14 +1292,14 @@ class TimerService : AccessibilityService() {
     private fun buyPots() {
         say("Pot azaldı, alışverişe gidiliyor")
         tapPoint("inventory")
-        pause(1000)
+        pause(gap())
         tapPoint("shopTab")
-        pause(1000)
+        pause(gap())
         for (i in 0 until 3) {
             tapPoint("purchaseHP")
-            pause(1000)
+            pause(gap())
             tapPoint("purchaseMP")
-            pause(1000)
+            pause(gap())
         }
         say("Pot alındı (3+3), Inventory kapatılıyor")
         closeInventory()
@@ -1302,11 +1310,11 @@ class TimerService : AccessibilityService() {
         say("Recycle yapılıyor")
         lastRecycle = System.currentTimeMillis()
         tapPoint("inventory")
-        pause(1000)
+        pause(gap())
         tapPoint("recycleTab")
-        pause(1000)
+        pause(gap())
         tapPoint("recycleBtn")
-        pause(1000)
+        pause(gap())
         say("Recycle basıldı, Inventory kapatılıyor")
         closeInventory()
         say("Recycle tamam")
@@ -1315,7 +1323,7 @@ class TimerService : AccessibilityService() {
     /** Envanter açıkken sağ üstteki X'e basar, hâlâ X görünüyorsa tekrar basar. */
     private fun closeInventory() {
         tapPoint("closeRight")
-        pause(1000)
+        pause(gap())
         for (i in 0 until 3) {
             val b = shot() ?: continue
             if (orangeAt(b, "closeRight")) {
@@ -1325,7 +1333,7 @@ class TimerService : AccessibilityService() {
             } else {
                 return
             }
-            pause(1000)
+            pause(gap())
         }
     }
 
@@ -1382,7 +1390,7 @@ class TimerService : AccessibilityService() {
         if (on("potOn")) {
             val b = shot()
             if (b != null) checkPots(b)
-            pause(1000)
+            pause(gap())
         }
         if (on("recycleOn")) doRecycle()
     }
@@ -1703,6 +1711,12 @@ class TimerService : AccessibilityService() {
         applyPanel()
     }
 
+    private fun changeGap(delta: Float) {
+        val v = (cfgF("clickGap", 1.0f) + delta).coerceIn(0.25f, 10f)
+        prefs().edit().putString("cfg_clickGap", String.format(java.util.Locale.US, "%.2f", v)).apply()
+        gapView?.text = String.format("%.2f", v)
+    }
+
     private fun changeRadius(delta: Int) {
         val v = (cfgI("radius", 200) + delta).coerceIn(0, 1000)
         prefs().edit().putString("cfg_radius", v.toString()).apply()
@@ -1901,6 +1915,24 @@ class TimerService : AccessibilityService() {
         rr.addView(rv, LinearLayout.LayoutParams(dp(48), LinearLayout.LayoutParams.WRAP_CONTENT))
         rr.addView(mkBtn("+") { changeRadius(25) }, LinearLayout.LayoutParams(dp(38), dp(34)))
         tb.addView(rr, rlp)
+        val gr = LinearLayout(this)
+        gr.orientation = LinearLayout.HORIZONTAL
+        gr.gravity = Gravity.CENTER_VERTICAL
+        val gl = TextView(this)
+        gl.text = "Pot/Recycle tık aralığı (sn)"
+        gl.textSize = 11f
+        gl.setTextColor(Color.WHITE)
+        gr.addView(gl, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        val gv = TextView(this)
+        gv.text = String.format("%.2f", gap() / 1000f)
+        gv.textSize = 13f
+        gv.gravity = Gravity.CENTER
+        gv.setTextColor(ACCENT)
+        gapView = gv
+        gr.addView(mkBtn("−") { changeGap(-0.25f) }, LinearLayout.LayoutParams(dp(38), dp(34)))
+        gr.addView(gv, LinearLayout.LayoutParams(dp(48), LinearLayout.LayoutParams.WRAP_CONTENT))
+        gr.addView(mkBtn("+") { changeGap(0.25f) }, LinearLayout.LayoutParams(dp(38), dp(34)))
+        tb.addView(gr, rlp)
         toolsBox = tb
         outer.addView(tb)
         tools.setOnClickListener {

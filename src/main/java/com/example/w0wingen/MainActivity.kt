@@ -55,6 +55,7 @@ class MainActivity : Activity() {
 
     private val shopFields = listOf(
         Field("potMin", "Pot eşiği", "HP veya MP pot sayısı bunun altına inerse alışverişe gidilir", "20"),
+        Field("clickGap", "Tık aralığı", "Pot ve Recycle adımları arasındaki bekleme (sn). Oyundaki panelden de değişir", "1.0", true),
         Field("maintMin", "Bakım aralığı", "Otomasyon açıkken bu kadar dakikada bir pot okunur/alınır, ardından Recycle yapılır (dk)", "20")
     )
 
