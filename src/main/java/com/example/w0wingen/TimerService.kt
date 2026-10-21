@@ -99,7 +99,7 @@ class TimerService : AccessibilityService() {
 
         /** Ayar menüsündeki gruplar. "Işınlanma bağlantıları" grubu haritalara göre ayrıca eklenir. */
         val GROUPS = listOf(
-            "1 · Okuma bölgeleri (Test ile kontrol et)" to listOf("nameTL", "nameBR", "cntTL", "cntBR"),
+            "1 · Okuma bölgeleri (Test ile kontrol et)" to listOf("nameTL", "nameBR", "cntTL", "cntBR", "miniTL", "miniBR"),
             "2 · Harita" to listOf("minimap", "closeMap", "random"),
             "3 · Chat" to listOf("chat", "pmTab", "closeChat"),
             "5 · Wire (sadece Raklion'lar)" to listOf("switchBtn", "wire1", "wire2", "wire3", "switchOk"),
@@ -115,6 +115,8 @@ class TimerService : AccessibilityService() {
             "nameBR" to "Aynı yazının SAĞ ALTI (Switch düğmesini içine alma)",
             "cntTL" to "Mezar sayacının arandığı alanın SOL ÜSTÜ (karakterin hemen üstü)",
             "cntBR" to "Mezar sayacının arandığı alanın SAĞ ALTI",
+            "miniTL" to "Mini haritanın SOL ÜST köşesi (boss ikonu burada aranır)",
+            "miniBR" to "Mini haritanın SAĞ ALT köşesi",
             "minimap" to "Sağ üstteki mini harita (haritayı açar)",
             "closeMap" to "Harita ekranının X (kapat) düğmesi (harita açıkken işaretle)",
             "random" to "Haritadaki Random düğmesi (harita açıkken işaretle)",
@@ -147,6 +149,8 @@ class TimerService : AccessibilityService() {
             "nameBR" to Pair(0.893f, 0.045f),
             "cntTL" to Pair(0.430f, 0.240f),
             "cntBR" to Pair(0.620f, 0.460f),
+            "miniTL" to Pair(0.865f, 0.012f),
+            "miniBR" to Pair(0.985f, 0.190f),
             "minimap" to Pair(0.922f, 0.046f),
             "closeMap" to Pair(0.894f, 0.157f),
             "random" to Pair(0.868f, 0.814f),
@@ -173,8 +177,9 @@ class TimerService : AccessibilityService() {
         val TOGGLES = listOf(
             Triple("potOn", "Pot", true),
             Triple("recycleOn", "Recycle", true),
-            Triple("randomOn", "Random", true),
-            Triple("buffOn", "Buff", false)
+            Triple("farmOn", "Farm", true),
+            Triple("buffOn", "Buff", false),
+            Triple("randomOn", "Random", true)
         )
     }
 
@@ -189,6 +194,7 @@ class TimerService : AccessibilityService() {
     private var saveBtn: Button? = null
     private var autoBtn: Button? = null
     private var listCol: LinearLayout? = null
+    private var radiusView: TextView? = null
     private var toolsBox: LinearLayout? = null
     private var panelLp: WindowManager.LayoutParams? = null
     private var handleLp: WindowManager.LayoutParams? = null
@@ -621,6 +627,39 @@ class TimerService : AccessibilityService() {
         if (gn < 15 * s * s) return null
         return PointF(x0 + gx.toFloat() / gn, y0 + gy.toFloat() / gn)
     }
+
+    /** Mini haritadaki canlı boss ikonunun turuncu-kırmızı alev rengi. Ölü ikon soluk olduğu için buna girmez. */
+    private fun isBossRed(c: Int): Boolean {
+        val r = Color.red(c)
+        val g = Color.green(c)
+        val b = Color.blue(c)
+        return r >= 165 && b <= 90 && g >= 35 && r - g >= 70 && r - b >= 110
+    }
+
+    /** Mini haritanın ortasında (oyuncunun yanında) canlı boss ikonu oranı. */
+    private fun miniFrac(b: Bitmap): Float {
+        val a = pt("miniTL")
+        val c = pt("miniBR")
+        val cxm = (a.first + c.first) / 2f
+        val cym = (a.second + c.second) / 2f
+        val hw = (c.first - a.first) / 2f * 0.6f
+        val hh = (c.second - a.second) / 2f * 0.6f
+        val x0 = maxOf(0, ((cxm - hw) * b.width).toInt())
+        val x1 = minOf(b.width - 1, ((cxm + hw) * b.width).toInt())
+        val y0 = maxOf(0, ((cym - hh) * b.height).toInt())
+        val y1 = minOf(b.height - 1, ((cym + hh) * b.height).toInt())
+        if (x1 <= x0 || y1 <= y0) return 0f
+        val w = x1 - x0 + 1
+        val row = IntArray(w)
+        var hit = 0
+        for (y in y0..y1) {
+            b.getPixels(row, 0, w, x0, y, w, 1)
+            for (x in 0 until w) if (isBossRed(row[x])) hit++
+        }
+        return hit.toFloat() / (w * (y1 - y0 + 1))
+    }
+
+    private fun miniAlive(b: Bitmap): Boolean = miniFrac(b) >= 0.004f
 
     // ------------------------------------------------------------------ OCR
 
@@ -1065,23 +1104,7 @@ class TimerService : AccessibilityService() {
     /** Bossun kayıtlı noktasına gider: gerekirse ışınlanır, wire değiştirir, Random ile yaklaşır, yürür. */
     private fun doGo(e: Entry) {
         say("Gidiliyor: " + title(e))
-        closeMapIfOpen()
-        var cur = readMapWireRetry()
-
-        if (key(cur.first) != key(e.map)) {
-            teleport(e.map)
-            cur = readMapWireRetry()
-            if (key(cur.first) != key(e.map)) fail("Işınlanma olmadı, şu an: " + cur.first)
-        }
-
-        if (mapInfo(e.map).wires > 1 && cur.second != e.wire) {
-            for (t in 0 until 2) {
-                switchWire(e.wire)
-                cur = readMapWireRetry()
-                if (cur.second == e.wire) break
-            }
-            if (cur.second != e.wire) fail("Wire değişmedi (şu an Wire " + cur.second + ", istenen " + e.wire + ")")
-        }
+        ensureLocation(e.map, e.wire)
 
         var mb = ensureMap()
         refreshScreen()
@@ -1182,18 +1205,55 @@ class TimerService : AccessibilityService() {
         pause(700)
     }
 
-    /** Farm konumuna gider, oto atağı başlatır ve kalkana dokunur. */
+    /** Wire'ı değiştirir ve minimap adından doğrular. */
+    private fun switchTo(w: Int): Boolean {
+        for (t in 0 until 2) {
+            switchWire(w)
+            val c = readMapWireRetry()
+            if (c.second == w) return true
+        }
+        return false
+    }
+
+    /** Hedef harita ve wire'a gelir: önce (mümkünse) wire, sonra chat bağlantısı, gerekirse wire'ı tekrar düzeltir. */
+    private fun ensureLocation(map: String, wire: Int) {
+        val target = mapInfo(map)
+        closeMapIfOpen()
+        var cur = readMapWireRetry()
+        if (mapInfo(cur.first).wires > 1 && target.wires > 1 && cur.second != wire) {
+            switchTo(wire)
+            cur = readMapWireRetry()
+        }
+        if (key(cur.first) != key(map)) {
+            teleport(map)
+            cur = readMapWireRetry()
+            if (key(cur.first) != key(map)) fail("Işınlanma olmadı, şu an: " + cur.first)
+        }
+        if (target.wires > 1 && cur.second != wire) {
+            if (!switchTo(wire)) fail("Wire değişmedi (istenen Wire " + wire + ")")
+        }
+    }
+
+    /** Farm: önce wire 3, sonra chat'ten farm bağlantısı, 10 sn sonra oto atak ve kalkan. */
     private fun doFarm() {
         val need = ArrayList<String>()
         for (n in listOf("chat", "pmTab", "farmLink", "autoAtk", "shield")) if (!hasPt(n)) need.add(n)
         if (need.isNotEmpty()) fail("Önce 'Ayar' menüsünden işaretle: " + need.joinToString(", "))
         closeMapIfOpen()
         setAuto(false)
+        val fw = cfgI("farmWire", 3)
+        val cur = readMapWireRetry()
+        if (mapInfo(cur.first).wires > 1 && cur.second != fw) {
+            say("Farm için Wire " + fw + " seçiliyor")
+            switchTo(fw)
+        }
         say("Farm konumuna gidiliyor")
         openChatLink("farmLink")
-        pause(cfgI("mapTravel", 10) * 1000)
+        say("Farm konumuna varılıyor (" + cfgI("farmWait", 10) + " sn)")
+        pause(cfgI("farmWait", 10) * 1000)
         say("Vardı, oto saldırı ve kalkan")
         setAuto(true)
+        pause(1000)
         tapPoint("shield")
         pause(500)
         farming = true
@@ -1204,12 +1264,12 @@ class TimerService : AccessibilityService() {
 
     private fun doPots() {
         say("Pot sayısı okunuyor")
+        closeMapIfOpen()
         val b = shot() ?: fail("Ekran görüntüsü alınamadı")
-        checkPots(b, true)
+        checkPots(b)
     }
 
-    private fun checkPots(b: Bitmap, force: Boolean) {
-        if (!force && System.currentTimeMillis() - lastPotBuy < 180000L) return
+    private fun checkPots(b: Bitmap) {
         if (orangeAt(b, "closeMap")) return
         val min = cfgI("potMin", 20)
         val hp = readCount(b, "hpCount")
@@ -1217,43 +1277,46 @@ class TimerService : AccessibilityService() {
         say("Pot: HP " + (hp ?: "?") + "  MP " + (mp ?: "?") + "  (eşik " + min + ")")
         val low = (hp != null && hp < min) || (mp != null && mp < min)
         if (!low) return
-        lastPotBuy = System.currentTimeMillis()
         buyPots()
     }
 
+    /** Inventory > Shop > iki Purchase düğmesine 3'er kez (toplam 6) > Inventory'yi kapat. Her adım arası 1 sn. */
     private fun buyPots() {
         say("Pot azaldı, alışverişe gidiliyor")
         tapPoint("inventory")
-        pause(1200)
+        pause(1000)
         tapPoint("shopTab")
-        pause(1200)
+        pause(1000)
         for (i in 0 until 3) {
             tapPoint("purchaseHP")
-            pause(450)
+            pause(1000)
             tapPoint("purchaseMP")
-            pause(450)
+            pause(1000)
         }
-        say("Pot alındı (3+3), pencereler kapatılıyor")
-        closeWindows()
+        say("Pot alındı (3+3), Inventory kapatılıyor")
+        closeInventory()
     }
 
+    /** Inventory > Recycle sekmesi > Recycle düğmesi > Inventory'yi kapat. Her adım arası 1 sn. */
     private fun doRecycle() {
         say("Recycle yapılıyor")
         lastRecycle = System.currentTimeMillis()
         tapPoint("inventory")
-        pause(1200)
+        pause(1000)
         tapPoint("recycleTab")
-        pause(1200)
+        pause(1000)
         tapPoint("recycleBtn")
-        pause(1200)
-        closeWindows()
+        pause(1000)
+        say("Recycle basıldı, Inventory kapatılıyor")
+        closeInventory()
         say("Recycle tamam")
     }
 
-    /** Envanter/Shop/Recycle pencerelerini, X düğmesi göründüğü sürece kapatır. */
-    private fun closeWindows() {
-        for (i in 0 until 5) {
-            pause(500)
+    /** Envanter açıkken sağ üstteki X'e basar, hâlâ X görünüyorsa tekrar basar. */
+    private fun closeInventory() {
+        tapPoint("closeRight")
+        pause(1000)
+        for (i in 0 until 3) {
             val b = shot() ?: continue
             if (orangeAt(b, "closeRight")) {
                 tapPoint("closeRight")
@@ -1262,13 +1325,21 @@ class TimerService : AccessibilityService() {
             } else {
                 return
             }
+            pause(1000)
         }
     }
 
-    /** ATK ve DEF ikisi de alt sınırın altındaysa buff noktasına gider ve bekler. */
+    /** Buff: önce wire 3, sonra buff konumu; ATK/DEF alt sınırın üstüne çıkınca devam. */
     private fun doBuff(minA: Int, minD: Int) {
         setAuto(false)
         farming = false
+        closeMapIfOpen()
+        val bw = cfgI("buffWire", 3)
+        val cur = readMapWireRetry()
+        if (mapInfo(cur.first).wires > 1 && cur.second != bw) {
+            say("Buff için Wire " + bw + " seçiliyor")
+            switchTo(bw)
+        }
         say("ATK/DEF düşük, buff noktasına gidiliyor")
         openChatLink("buffLink")
         pause(cfgI("buffTravel", 12) * 1000)
@@ -1288,31 +1359,40 @@ class TimerService : AccessibilityService() {
         say("Buff süresi doldu")
     }
 
-    /** Otomasyon bakımı: buff, pot ve (zamanı geldiyse) Recycle. Tek ekran görüntüsüyle bakar. */
+    /** Buff açıksa ATK/DEF'e bakar, ikisi de alt sınırın altındaysa buff'a gider. */
+    private fun buffCheck() {
+        if (!on("buffOn")) return
+        closeMapIfOpen()
+        val b = shot() ?: return
+        val st = readStats(b)
+        val minA = cfgI("minAtk", 0)
+        val minD = cfgI("minDef", 0)
+        if (st == null) {
+            say("ATK/DEF okunamadı: " + lastOcr)
+            return
+        }
+        if (st.first < minA && st.second < minD) doBuff(minA, minD)
+        else say("ATK " + st.first + " DEF " + st.second + " tamam")
+    }
+
+    /** Otomasyon bakımı (her 20 dk): pot okuma/alma, ardından Recycle. */
     private fun maintenance() {
         lastMaint = System.currentTimeMillis()
-        val recDue = on("recycleOn") && System.currentTimeMillis() - lastRecycle >= cfgI("recycleMin", 15) * 60000L
-        if (!on("buffOn") && !on("potOn") && !recDue) return
-        val b = shot() ?: return
-        if (orangeAt(b, "closeMap")) return
-        if (on("buffOn")) {
-            val st = readStats(b)
-            val minA = cfgI("minAtk", 0)
-            val minD = cfgI("minDef", 0)
-            if (st != null && st.first < minA && st.second < minD) {
-                doBuff(minA, minD)
-                return
-            }
+        closeMapIfOpen()
+        if (on("potOn")) {
+            val b = shot()
+            if (b != null) checkPots(b)
+            pause(1000)
         }
-        if (on("potOn")) checkPots(b, false)
-        if (recDue) doRecycle()
+        if (on("recycleOn")) doRecycle()
     }
 
     // ------------------------------------------------------------------ otomasyon
 
     private fun missingForAuto(): List<String> {
         val need = ArrayList<String>()
-        for (n in listOf("chat", "pmTab", "farmLink", "autoAtk", "shield")) if (!hasPt(n)) need.add(n)
+        if (on("farmOn")) for (n in listOf("chat", "pmTab", "farmLink", "autoAtk", "shield")) if (!hasPt(n)) need.add(n)
+        for (n in listOf("chat", "pmTab", "autoAtk")) if (!hasPt(n) && !need.contains(n)) need.add(n)
         if (on("buffOn") && !hasPt("buffLink")) need.add("buffLink")
         for (e in snapshot()) {
             val l = "link_" + e.map
@@ -1359,16 +1439,24 @@ class TimerService : AccessibilityService() {
         gameAuto = false
         farming = false
         fails = 0
+        lastMaint = 0L
         say("Otomasyon açık")
-        maintenance()
+        buffCheck()
         while (autoRunning && !cancel) {
             try {
+                val now = System.currentTimeMillis()
                 val due = nextDue()
+                val every = cfgI("maintMin", 20) * 60000L
+                val maintDue = (on("potOn") || on("recycleOn")) && now - lastMaint >= every
+                if (maintDue && (due == null || now - lastMaint >= every + 300000L)) {
+                    maintenance()
+                    continue
+                }
                 if (due != null) {
                     runBoss(due)
                     continue
                 }
-                if (!farming) {
+                if (on("farmOn") && !farming) {
                     doFarm()
                     fails = 0
                 }
@@ -1398,12 +1486,9 @@ class TimerService : AccessibilityService() {
         var next: Entry? = null
         for (e in snapshot()) if (next == null || e.endMs < next.endMs) next = e
         say(
-            "Farmda bekleniyor" + (if (next != null) "\nSıradaki: " + title(next) + " · " + fmt((next.endMs - now) / 1000) else "")
+            (if (farming) "Farmda bekleniyor" else "Bekleniyor") +
+                (if (next != null) "\nSıradaki: " + title(next) + " · " + fmt((next.endMs - now) / 1000) else "")
         )
-        if (now - lastMaint > 120000L) {
-            maintenance()
-            return
-        }
         pause(1500)
     }
 
@@ -1415,64 +1500,99 @@ class TimerService : AccessibilityService() {
             farming = false
         }
         say("Sıradaki: " + title(e))
-        doGo(e)
-        val killed = fightBoss(e)
+        val ok = goAndKill(e)
         currentId = 0L
         ui { rebuildList() }
-        if (killed) {
+        if (ok) {
             kills++
             fails = 0
-            maintenance()
+            buffCheck()
         } else {
             blocked[e.id] = System.currentTimeMillis() + 90000L
         }
     }
 
+    /** Hem otomasyonda hem elle bir satıra basınca: bossa git, oto atak aç, ölünce sayacı yeniden kaydet. */
+    private fun goAndKill(e: Entry): Boolean {
+        doGo(e)
+        return fightBoss(e)
+    }
+
     /**
-     * Bossun noktasına varıldıktan sonra: sayaç hâlâ geri sayıyorsa doğmasını bekler, sayaç yoksa
-     * oto atağı açıp keser, yeni (uzun) sayaç belirince kaydeder. Doğru okuma için en az 2-3 kare uyuşmalı.
+     * Bossun noktasına varıldıktan sonra oto atak açılır. Ölüm tespiti muimm'deki gibi sağ üst mini haritadan:
+     * boss ikonu görünür (canlı) sonra üst üste 3 kare görünmezse öldü. Ölünce mezardaki yeni sayaç okunup kaydedilir.
+     * Boss henüz doğmamışsa sayaçtan doğmasını bekler; başkası kesmişse yeni sayaç görünür ve o kaydedilir.
      */
     private fun fightBoss(e: Entry): Boolean {
         val t0 = System.currentTimeMillis()
         val limit = cfgI("fightTimeout", 300) * 1000L
-        val ends = ArrayList<Long>()
-        var absent = 0
-        var fighting = false
+        setAuto(true)
+        say(title(e) + "\nOto atak açık, boss bekleniyor")
+        var seen = false
+        var dead = 0
+        val early = ArrayList<Long>()
         while (true) {
             pause(300)
             val b = shot() ?: continue
             val stamp = lastShot
-            val secs = readTimer(b)
-            val now = System.currentTimeMillis()
-            if (secs != null && secs > 90) {
-                ends.add(stamp + secs * 1000L)
-                val c = consensus(ends, if (fighting) 3 else 2)
+            if (orangeAt(b, "closeMap")) {
+                tapPoint("closeMap")
+                pause(600)
+                continue
+            }
+            if (miniAlive(b)) {
+                seen = true
+                dead = 0
+                early.clear()
+                say(title(e) + "\nBoss canlı, savaşılıyor")
+            } else if (seen) {
+                dead++
+                say(title(e) + "\nBoss öldü mü? " + dead + "/3")
+                if (dead >= 3) break
+            } else {
+                val secs = readTimer(b)
+                if (secs != null && secs > 90) {
+                    early.add(stamp + secs * 1000L)
+                    val c = consensus(early, 2)
+                    if (c != null) {
+                        setEnd(e, c)
+                        setAuto(false)
+                        say("Boss zaten kesilmiş, süre güncellendi: " + title(e) + " · " + fmt((c - System.currentTimeMillis()) / 1000))
+                        return true
+                    }
+                } else {
+                    early.clear()
+                    if (secs != null) say(title(e) + "\nDoğmasına " + secs + " sn")
+                }
+            }
+            if (System.currentTimeMillis() - t0 > limit) {
+                setAuto(false)
+                say("Savaş zaman aşımı: " + title(e))
+                return false
+            }
+        }
+        say(title(e) + "\nBoss öldü, sayaç okunuyor")
+        val ends = ArrayList<Long>()
+        for (i in 0 until 10) {
+            val b = shot() ?: continue
+            val stamp = lastShot
+            val s = readTimer(b)
+            if (s != null && s > 90) {
+                ends.add(stamp + s * 1000L)
+                val c = consensus(ends, 2)
                 if (c != null) {
                     setEnd(e, c)
                     setAuto(false)
                     say("Kaydedildi: " + title(e) + " · " + fmt((c - System.currentTimeMillis()) / 1000))
                     return true
                 }
-                absent = 0
-            } else if (secs != null) {
-                ends.clear()
-                absent = 0
-                say(title(e) + "\nDoğmasına " + secs + " sn")
-            } else {
-                ends.clear()
-                absent++
-                if (absent >= 2 && !fighting) {
-                    setAuto(true)
-                    fighting = true
-                    say(title(e) + "\nBoss kesiliyor")
-                }
             }
-            if (now - t0 > limit) {
-                setAuto(false)
-                say("Savaş zaman aşımı: " + title(e))
-                return false
-            }
+            pause(300)
         }
+        setAuto(false)
+        blocked[e.id] = System.currentTimeMillis() + 600000L
+        say("Boss öldü ama sayaç okunamadı: " + title(e) + "\nKarakter mezarın üstündeyken Kaydet'e bas.")
+        return true
     }
 
     /** Test: ekranı okuyup sonuçları ve okuma bölgelerini gösterir. */
@@ -1486,9 +1606,11 @@ class TimerService : AccessibilityService() {
         val st = readStats(b)
         val open = orangeAt(b, "closeMap")
         val me = if (open) findPlayer(b) else null
+        val mf = miniFrac(b)
         say(
             "Harita: " + (if (info != null) info.first + " · Wire " + info.second else "okunamadı") + "  ('" + o1 + "')" +
                 "\nSayaç: " + (if (secs != null) fmt(secs.toLong()) else "okunamadı") + "  ('" + o3 + "')" +
+                "\nMini harita boss: " + String.format("%.4f", mf) + (if (miniAlive(b)) " CANLI" else " yok") + " (eşik 0.0040)" +
                 "\nATK/DEF: " + (if (st != null) st.first.toString() + "/" + st.second else "okunamadı") +
                 "\nPot HP/MP: " + (readCount(b, "hpCount") ?: "?") + "/" + (readCount(b, "mpCount") ?: "?") +
                 "\nHarita açık: " + open + (if (open) "  imleç: " + (me != null) else "")
@@ -1579,6 +1701,12 @@ class TimerService : AccessibilityService() {
         }
         updateToggles()
         applyPanel()
+    }
+
+    private fun changeRadius(delta: Int) {
+        val v = (cfgI("radius", 200) + delta).coerceIn(0, 1000)
+        prefs().edit().putString("cfg_radius", v.toString()).apply()
+        radiusView?.text = v.toString()
     }
 
     private fun updateToggles() {
@@ -1705,25 +1833,31 @@ class TimerService : AccessibilityService() {
         slp.topMargin = dp(8)
         outer.addView(sv, slp)
 
-        // açık/kapalı düğmeleri
-        val tr = LinearLayout(this)
-        tr.orientation = LinearLayout.HORIZONTAL
+        // açık/kapalı düğmeleri (iki satır)
+        val trow1 = LinearLayout(this)
+        trow1.orientation = LinearLayout.HORIZONTAL
+        val trow2 = LinearLayout(this)
+        trow2.orientation = LinearLayout.HORIZONTAL
         for (i in TOGGLES.indices) {
             val k = TOGGLES[i].first
             val bt = mkBtn("") {
                 prefs().edit().putBoolean("cfg_" + k, !on(k)).apply()
                 updateToggles()
             }
-            bt.textSize = 11f
+            bt.textSize = 12f
             bt.setPadding(dp(2), dp(4), dp(2), dp(4))
+            val inFirst = i < 3
             val tl = LinearLayout.LayoutParams(0, dp(34), 1f)
-            if (i > 0) tl.leftMargin = dp(4)
-            tr.addView(bt, tl)
+            if (if (inFirst) i > 0 else i > 3) tl.leftMargin = dp(4)
+            (if (inFirst) trow1 else trow2).addView(bt, tl)
             toggleBtns[k] = bt
         }
-        val trlp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
-        trlp.topMargin = dp(8)
-        outer.addView(tr, trlp)
+        val t1lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+        t1lp.topMargin = dp(8)
+        outer.addView(trow1, t1lp)
+        val t2lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+        t2lp.topMargin = dp(4)
+        outer.addView(trow2, t2lp)
 
         // araçlar (varsayılan gizli)
         val tb = LinearLayout(this)
@@ -1749,6 +1883,24 @@ class TimerService : AccessibilityService() {
         rlp.topMargin = dp(6)
         tb.addView(r1, rlp)
         tb.addView(r2, rlp)
+        val rr = LinearLayout(this)
+        rr.orientation = LinearLayout.HORIZONTAL
+        rr.gravity = Gravity.CENTER_VERTICAL
+        val rl = TextView(this)
+        rl.text = "Random yarıçap (px)"
+        rl.textSize = 11f
+        rl.setTextColor(Color.WHITE)
+        rr.addView(rl, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        val rv = TextView(this)
+        rv.text = cfgI("radius", 200).toString()
+        rv.textSize = 13f
+        rv.gravity = Gravity.CENTER
+        rv.setTextColor(ACCENT)
+        radiusView = rv
+        rr.addView(mkBtn("−") { changeRadius(-25) }, LinearLayout.LayoutParams(dp(38), dp(34)))
+        rr.addView(rv, LinearLayout.LayoutParams(dp(48), LinearLayout.LayoutParams.WRAP_CONTENT))
+        rr.addView(mkBtn("+") { changeRadius(25) }, LinearLayout.LayoutParams(dp(38), dp(34)))
+        tb.addView(rr, rlp)
         toolsBox = tb
         outer.addView(tb)
         tools.setOnClickListener {
@@ -1854,7 +2006,7 @@ class TimerService : AccessibilityService() {
         tm.typeface = android.graphics.Typeface.DEFAULT_BOLD
         left.addView(tm)
         timerViews[e.id] = tm
-        left.setOnClickListener { runManual { doGo(e) } }
+        left.setOnClickListener { runManual { goAndKill(e) } }
         row.addView(left, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
 
         val del = TextView(this)

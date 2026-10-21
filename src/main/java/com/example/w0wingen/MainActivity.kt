@@ -29,6 +29,11 @@ class MainActivity : Activity() {
         Field("fightTimeout", "Savaş zaman aşımı", "Bir boss için en fazla bekleme (sn)", "300")
     )
 
+    private val farmFields = listOf(
+        Field("farmWire", "Farm wire'ı", "Farma giderken önce bu wire'a geçilir", "3"),
+        Field("farmWait", "Farm konumuna varış bekleme", "Bağlantıya dokunduktan bu kadar sn sonra oto atak ve kalkan (sn)", "10")
+    )
+
     private val moveFields = listOf(
         Field("radius", "Random yarıçapı", "Oyuncu boss noktasına bu kadar yaklaşınca Random bırakılıp yürünür (piksel, 0 = Random kapalı)", "200"),
         Field("randomWait", "Random sonrası bekleme", "Işınlanma yüklenirken beklenecek süre (sn)", "2.5", true),
@@ -43,13 +48,14 @@ class MainActivity : Activity() {
     private val buffFields = listOf(
         Field("minAtk", "Minimum ATK", "ATK ve DEF ikisi de altındaysa buff'a gidilir", "0"),
         Field("minDef", "Minimum DEF", "", "0"),
+        Field("buffWire", "Buff wire'ı", "Buff'a giderken önce bu wire'a geçilir", "3"),
         Field("buffTravel", "Buff yürüme süresi", "Buff noktasına varmak için bekleme (sn)", "12"),
         Field("buffWait", "Buff bekleme sınırı", "Buff'ın gelmesini en fazla bu kadar bekle (sn)", "90")
     )
 
     private val shopFields = listOf(
         Field("potMin", "Pot eşiği", "HP veya MP pot sayısı bunun altına inerse alışverişe gidilir", "20"),
-        Field("recycleMin", "Recycle aralığı", "Bu kadar dakikada bir Recycle yapılır (dk)", "15")
+        Field("maintMin", "Bakım aralığı", "Otomasyon açıkken bu kadar dakikada bir pot okunur/alınır, ardından Recycle yapılır (dk)", "20")
     )
 
     private val BG = 0xFF0F1115.toInt()
@@ -61,6 +67,7 @@ class MainActivity : Activity() {
     private val inputs = HashMap<String, EditText>()
     private lateinit var mapsEdit: EditText
     private lateinit var randomOn: Switch
+    private lateinit var farmOn: Switch
     private lateinit var buffOn: Switch
     private lateinit var potOn: Switch
     private lateinit var recycleOn: Switch
@@ -130,6 +137,10 @@ class MainActivity : Activity() {
         val auto = card(col, "Otomasyon")
         for (f in autoFields) addField(auto, f)
 
+        val farm = card(col, "Farm")
+        farmOn = sw(farm, "Boss yokken farm konumuna git", "cfg_farmOn", true)
+        for (f in farmFields) addField(farm, f)
+
         val move = card(col, "Işınlanma ve yürüme")
         randomOn = sw(move, "Bossa giderken Random ışınlanma açık", "cfg_randomOn", true)
         for (f in moveFields) addField(move, f)
@@ -141,19 +152,20 @@ class MainActivity : Activity() {
         val shop = card(col, "Pot ve Recycle")
         potOn = sw(shop, "Pot alma açık", "cfg_potOn", true)
         addField(shop, shopFields[0])
-        recycleOn = sw(shop, "Otomatik Recycle açık", "cfg_recycleOn", true)
+        recycleOn = sw(shop, "Recycle açık (pot kontrolünden sonra)", "cfg_recycleOn", true)
         addField(shop, shopFields[1])
 
         val save = button("Kaydet", true)
         save.setOnClickListener {
             val e = prefs().edit()
-            val all = autoFields + moveFields + buffFields + shopFields
+            val all = autoFields + farmFields + moveFields + buffFields + shopFields
             for ((k, et) in inputs) {
                 val f = all.first { it.key == k }
                 val raw = et.text.toString().trim()
                 e.putString("cfg_" + k, if (raw.isEmpty()) f.def else raw)
             }
             e.putBoolean("cfg_randomOn", randomOn.isChecked)
+            e.putBoolean("cfg_farmOn", farmOn.isChecked)
             e.putBoolean("cfg_buffOn", buffOn.isChecked)
             e.putBoolean("cfg_potOn", potOn.isChecked)
             e.putBoolean("cfg_recycleOn", recycleOn.isChecked)
