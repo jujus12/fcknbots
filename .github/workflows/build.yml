@@ -35,3 +35,9 @@ jobs:
           tag_name: build-${{ github.run_number }}
           name: Build ${{ github.run_number }}
           files: w0wingen.apk
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: w0wingen-debug-apk
+          path: w0wingen.apk
